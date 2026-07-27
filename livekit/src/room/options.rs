@@ -20,6 +20,9 @@ use crate::prelude::*;
 // Re-export DegradationPreference for users
 pub use libwebrtc::rtp_parameters::DegradationPreference;
 
+/// Per-spatial-layer bitrate budgets for SVC encodings.
+pub use libwebrtc::rtp_parameters::SvcLayerBitrates;
+
 /// Preferred backend for video encoding when publishing a video track.
 pub use libwebrtc::rtp_sender::VideoEncoderBackend;
 
@@ -139,6 +142,15 @@ pub struct TrackPublishOptions {
     /// encoding is produced and that mode is forwarded to libwebrtc to
     /// enable true SVC for VP9/AV1. Has no effect for VP8/H264.
     pub scalability_mode: Option<String>,
+    /// Per-spatial-layer bitrate budgets for SVC encodings, ordered from the
+    /// lowest spatial layer to the highest. Only consulted when
+    /// `scalability_mode` is set. Overrides libwebrtc's resolution-derived
+    /// per-layer limits, and raises the encoding's max bitrate to at least
+    /// the sum of the budgets so the rate allocator can honor them.
+    ///
+    /// Requires a libwebrtc build with svc_layer_bitrates support; silently
+    /// ignored on older builds.
+    pub svc_layer_bitrates: Vec<SvcLayerBitrates>,
     /// Controls how the encoder trades off between resolution and framerate
     /// when bandwidth is constrained.
     ///
@@ -169,6 +181,7 @@ impl Default for TrackPublishOptions {
             frame_metadata_features: FrameMetadataFeatures::default(),
             video_encoder: VideoEncoderBackend::Auto,
             scalability_mode: None,
+            svc_layer_bitrates: Vec::new(),
             degradation_preference: None,
         }
     }
@@ -241,6 +254,16 @@ pub fn compute_video_encodings(
         let mut encodings = into_rtp_encodings(width, height, &[initial_preset]);
         if let Some(first) = encodings.first_mut() {
             first.scalability_mode = Some(mode);
+            if !options.svc_layer_bitrates.is_empty() {
+                first.svc_layer_bitrates = options.svc_layer_bitrates.clone();
+                // libwebrtc caps the total SVC allocation at the encoding's
+                // max bitrate, so make sure it covers the per-layer budgets.
+                let total: u64 =
+                    options.svc_layer_bitrates.iter().map(|layer| layer.max_bitrate).sum();
+                if total > 0 {
+                    first.max_bitrate = Some(first.max_bitrate.unwrap_or(0).max(total));
+                }
+            }
         }
         return encodings;
     }
@@ -427,6 +450,7 @@ pub fn video_layers_from_encodings(
             let spatial = spatial_layers_from_scalability_mode(mode);
             if spatial > 1 {
                 let total_bitrate = encodings[0].max_bitrate.unwrap_or(0);
+                let layer_budgets = &encodings[0].svc_layer_bitrates;
                 let mut layers = Vec::with_capacity(spatial as usize);
                 // Highest spatial layer is the source resolution; each lower
                 // layer is half on each axis (the libwebrtc default for
@@ -438,11 +462,23 @@ pub fn video_layers_from_encodings(
                         (1, _) => proto::VideoQuality::Medium,
                         _ => proto::VideoQuality::Low,
                     };
+                    // Receiving spatial layer i implies receiving all lower
+                    // spatial layers, so advertise the cumulative budget when
+                    // per-layer budgets are configured.
+                    let bitrate = if layer_budgets.is_empty() {
+                        total_bitrate / spatial as u64
+                    } else {
+                        layer_budgets
+                            .iter()
+                            .take(i as usize + 1)
+                            .map(|layer| layer.max_bitrate)
+                            .sum()
+                    };
                     layers.push(proto::VideoLayer {
                         quality: quality as i32,
                         width: width / scale,
                         height: height / scale,
-                        bitrate: (total_bitrate / spatial as u64) as u32,
+                        bitrate: bitrate as u32,
                         ssrc: 0,
                         ..Default::default()
                     });
@@ -556,8 +592,8 @@ pub mod screenshare {
 #[cfg(test)]
 mod tests {
     use super::{
-        get_default_degradation_preference, DegradationPreference, TrackPublishOptions,
-        VideoEncoderBackend,
+        compute_video_encodings, get_default_degradation_preference, DegradationPreference,
+        SvcLayerBitrates, TrackPublishOptions, VideoEncoderBackend,
     };
     use crate::prelude::TrackSource;
 
@@ -628,5 +664,63 @@ mod tests {
             get_default_degradation_preference(&options, 1080),
             DegradationPreference::MaintainFramerateAndResolution
         );
+    }
+
+    #[test]
+    fn svc_layer_bitrates_attached_to_svc_encoding() {
+        let options = TrackPublishOptions {
+            scalability_mode: Some("L3T3_KEY".to_string()),
+            svc_layer_bitrates: vec![
+                SvcLayerBitrates { max_bitrate: 200_000, target_bitrate: None },
+                SvcLayerBitrates { max_bitrate: 600_000, target_bitrate: Some(500_000) },
+                SvcLayerBitrates { max_bitrate: 1_500_000, target_bitrate: None },
+            ],
+            ..Default::default()
+        };
+
+        let encodings = compute_video_encodings(512, 512, &options);
+        assert_eq!(encodings.len(), 1);
+        let encoding = &encodings[0];
+        assert_eq!(encoding.scalability_mode.as_deref(), Some("L3T3_KEY"));
+        assert_eq!(encoding.svc_layer_bitrates, options.svc_layer_bitrates);
+        // Max bitrate must cover the sum of the per-layer budgets so the
+        // rate allocator can honor them.
+        assert!(encoding.max_bitrate.unwrap() >= 2_300_000);
+    }
+
+    #[test]
+    fn svc_layer_bitrates_keep_higher_explicit_max_bitrate() {
+        let options = TrackPublishOptions {
+            scalability_mode: Some("L2T3_KEY".to_string()),
+            video_encoding: Some(super::VideoEncoding {
+                max_bitrate: 5_000_000,
+                max_framerate: 30.0,
+            }),
+            svc_layer_bitrates: vec![
+                SvcLayerBitrates { max_bitrate: 400_000, target_bitrate: None },
+                SvcLayerBitrates { max_bitrate: 1_500_000, target_bitrate: None },
+            ],
+            ..Default::default()
+        };
+
+        let encodings = compute_video_encodings(512, 512, &options);
+        assert_eq!(encodings.len(), 1);
+        assert_eq!(encodings[0].max_bitrate, Some(5_000_000));
+    }
+
+    #[test]
+    fn svc_layer_bitrates_ignored_without_scalability_mode() {
+        let options = TrackPublishOptions {
+            simulcast: false,
+            svc_layer_bitrates: vec![SvcLayerBitrates {
+                max_bitrate: 1_000_000,
+                target_bitrate: None,
+            }],
+            ..Default::default()
+        };
+
+        let encodings = compute_video_encodings(512, 512, &options);
+        assert_eq!(encodings.len(), 1);
+        assert!(encodings[0].svc_layer_bitrates.is_empty());
     }
 }

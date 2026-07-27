@@ -51,6 +51,22 @@ pub struct RtpHeaderExtensionParameters {
     pub encrypted: bool,
 }
 
+/// Per-spatial-layer bitrate budget for an SVC encoding, ordered from the
+/// lowest spatial layer to the highest. Overrides the resolution-based
+/// per-layer limits libwebrtc derives for SVC scalability modes.
+///
+/// Requires a libwebrtc build with `RtpEncodingParameters::svc_layer_bitrates`
+/// support; silently ignored on older builds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SvcLayerBitrates {
+    /// Maximum bitrate in bps for this spatial layer, all temporal layers
+    /// included. A value of 0 keeps the derived default.
+    pub max_bitrate: u64,
+    /// Optional target bitrate in bps. When `None`, a target is derived from
+    /// `max_bitrate`.
+    pub target_bitrate: Option<u64>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct RtpParameters {
     pub codecs: Vec<RtpCodecParameters>,
@@ -139,6 +155,9 @@ pub struct RtpEncodingParameters {
     /// RTP scalability mode (e.g. "L3T3_KEY"). Required to enable true
     /// SVC for codecs that support it (VP9, AV1).
     pub scalability_mode: Option<String>,
+    /// Per-spatial-layer bitrate overrides for SVC encodings. Only consulted
+    /// when `scalability_mode` carries multiple spatial layers.
+    pub svc_layer_bitrates: Vec<SvcLayerBitrates>,
     /// Preserved for round-trip fidelity with WebRTC's getParameters/setParameters.
     pub has_ssrc: bool,
     pub ssrc: u32,
@@ -174,6 +193,7 @@ impl Default for RtpEncodingParameters {
             rid: String::default(),
             scale_resolution_down_by: None,
             scalability_mode: None,
+            svc_layer_bitrates: Vec::default(),
             has_ssrc: false,
             ssrc: 0,
         }

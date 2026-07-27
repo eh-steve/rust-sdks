@@ -123,6 +123,13 @@ pub mod ffi {
     }
 
     #[derive(Debug)]
+    pub struct SvcLayerBitrates {
+        pub max_bitrate_bps: i32,
+        pub has_target_bitrate_bps: bool,
+        pub target_bitrate_bps: i32,
+    }
+
+    #[derive(Debug)]
     pub struct RtpEncodingParameters {
         pub has_ssrc: bool,
         pub ssrc: u32,
@@ -140,6 +147,9 @@ pub mod ffi {
         pub scale_resolution_down_by: f64,
         pub has_scalability_mode: bool,
         pub scalability_mode: String,
+        // Per-spatial-layer bitrate overrides for SVC encodings. Requires a
+        // libwebrtc build with svc_layer_bitrates support; ignored otherwise.
+        pub svc_layer_bitrates: Vec<SvcLayerBitrates>,
         pub active: bool,
         pub rid: String,
         pub adaptive_ptime: bool,

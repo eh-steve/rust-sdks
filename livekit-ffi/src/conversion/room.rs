@@ -19,8 +19,8 @@ use livekit::{
         E2eeOptions, EncryptionType,
     },
     options::{
-        AudioEncoding, DegradationPreference, FrameMetadataFeatures, TrackPublishOptions,
-        VideoEncoderBackend, VideoEncoding,
+        AudioEncoding, DegradationPreference, FrameMetadataFeatures, SvcLayerBitrates,
+        TrackPublishOptions, VideoEncoderBackend, VideoEncoding,
     },
     prelude::*,
     webrtc::{
@@ -353,6 +353,14 @@ impl From<proto::TrackPublishOptions> for TrackPublishOptions {
             video_encoder: video_encoder_from_proto(opts.video_encoder)
                 .unwrap_or(default_publish_options.video_encoder),
             scalability_mode: opts.scalability_mode,
+            svc_layer_bitrates: opts
+                .svc_layer_bitrates
+                .into_iter()
+                .map(|layer| SvcLayerBitrates {
+                    max_bitrate: layer.max_bitrate,
+                    target_bitrate: layer.target_bitrate,
+                })
+                .collect(),
             degradation_preference: degradation_preference_from_proto(opts.degradation_preference),
         }
     }
@@ -372,10 +380,36 @@ impl From<proto::AudioEncoding> for AudioEncoding {
 
 #[cfg(test)]
 mod tests {
-    use livekit::options::{TrackPublishOptions, VideoEncoderBackend};
+    use livekit::options::{SvcLayerBitrates, TrackPublishOptions, VideoEncoderBackend};
 
     use super::{frame_metadata_features_from_proto, video_encoder_from_proto};
     use crate::proto;
+
+    #[test]
+    fn svc_layer_bitrates_default_to_empty() {
+        let opts = TrackPublishOptions::from(proto::TrackPublishOptions::default());
+        assert!(opts.svc_layer_bitrates.is_empty());
+    }
+
+    #[test]
+    fn svc_layer_bitrates_map_from_proto() {
+        let proto_opts = proto::TrackPublishOptions {
+            svc_layer_bitrates: vec![
+                proto::SvcLayerBitrates { max_bitrate: 400_000, target_bitrate: None },
+                proto::SvcLayerBitrates { max_bitrate: 1_500_000, target_bitrate: Some(1_200_000) },
+            ],
+            ..Default::default()
+        };
+
+        let opts = TrackPublishOptions::from(proto_opts);
+        assert_eq!(
+            opts.svc_layer_bitrates,
+            vec![
+                SvcLayerBitrates { max_bitrate: 400_000, target_bitrate: None },
+                SvcLayerBitrates { max_bitrate: 1_500_000, target_bitrate: Some(1_200_000) },
+            ]
+        );
+    }
 
     #[test]
     fn frame_metadata_features_default_to_empty() {

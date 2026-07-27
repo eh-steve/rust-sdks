@@ -126,6 +126,16 @@ webrtc::RtpEncodingParameters to_native_rtp_encoding_paramters(
 
   if (parameters.has_scale_resolution_down_by)
     native.scale_resolution_down_by = parameters.scale_resolution_down_by;
+
+#ifdef WEBRTC_RTP_ENCODING_PARAMETERS_HAS_SVC_LAYER_BITRATES
+  for (auto layer : parameters.svc_layer_bitrates) {
+    webrtc::SvcLayerBitrates native_layer{};
+    native_layer.max_bitrate_bps = layer.max_bitrate_bps;
+    if (layer.has_target_bitrate_bps)
+      native_layer.target_bitrate_bps = layer.target_bitrate_bps;
+    native.svc_layer_bitrates.push_back(native_layer);
+  }
+#endif
   return native;
 }
 
@@ -329,6 +339,18 @@ RtpEncodingParameters to_rust_rtp_encoding_parameters(
   rust.active = params.active;
   rust.rid = params.rid;
   rust.adaptive_ptime = params.adaptive_ptime;
+
+#ifdef WEBRTC_RTP_ENCODING_PARAMETERS_HAS_SVC_LAYER_BITRATES
+  for (auto layer : params.svc_layer_bitrates) {
+    SvcLayerBitrates rust_layer{};
+    rust_layer.max_bitrate_bps = layer.max_bitrate_bps;
+    if (layer.target_bitrate_bps.has_value()) {
+      rust_layer.has_target_bitrate_bps = true;
+      rust_layer.target_bitrate_bps = layer.target_bitrate_bps.value();
+    }
+    rust.svc_layer_bitrates.push_back(rust_layer);
+  }
+#endif
   return rust;
 }
 

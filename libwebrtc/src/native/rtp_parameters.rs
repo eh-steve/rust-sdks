@@ -100,6 +100,16 @@ impl From<sys_rp::ffi::RtpEncodingParameters> for RtpEncodingParameters {
                 .has_scale_resolution_down_by
                 .then_some(value.scale_resolution_down_by),
             scalability_mode: value.has_scalability_mode.then_some(value.scalability_mode),
+            svc_layer_bitrates: value
+                .svc_layer_bitrates
+                .into_iter()
+                .map(|layer| SvcLayerBitrates {
+                    max_bitrate: layer.max_bitrate_bps.max(0) as u64,
+                    target_bitrate: layer
+                        .has_target_bitrate_bps
+                        .then_some(layer.target_bitrate_bps.max(0) as u64),
+                })
+                .collect(),
             has_ssrc: value.has_ssrc,
             ssrc: value.ssrc,
         }
@@ -255,6 +265,18 @@ impl From<RtpEncodingParameters> for sys_rp::ffi::RtpEncodingParameters {
             num_temporal_layers: 0,
             has_scalability_mode: value.scalability_mode.is_some(),
             scalability_mode: value.scalability_mode.unwrap_or_default(),
+            svc_layer_bitrates: value
+                .svc_layer_bitrates
+                .into_iter()
+                .map(|layer| sys_rp::ffi::SvcLayerBitrates {
+                    max_bitrate_bps: layer.max_bitrate.min(i32::MAX as u64) as i32,
+                    has_target_bitrate_bps: layer.target_bitrate.is_some(),
+                    target_bitrate_bps: layer
+                        .target_bitrate
+                        .unwrap_or_default()
+                        .min(i32::MAX as u64) as i32,
+                })
+                .collect(),
             has_ssrc: value.has_ssrc,
             ssrc: value.ssrc,
         }

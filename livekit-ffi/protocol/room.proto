@@ -305,6 +305,15 @@ message AudioEncoding {
   required uint64 max_bitrate = 1;
 }
 
+// Per-spatial-layer bitrate budget for an SVC encoding.
+message SvcLayerBitrates {
+  // Maximum bitrate in bps for this spatial layer, all temporal layers
+  // included. 0 keeps the codec's derived default for the layer.
+  required uint64 max_bitrate = 1;
+  // Optional target bitrate in bps; derived from max_bitrate when unset.
+  optional uint64 target_bitrate = 2;
+}
+
 message TrackPublishOptions {
   // encodings are optional
   optional VideoEncoding video_encoding = 1;
@@ -326,6 +335,12 @@ message TrackPublishOptions {
   // Controls how the encoder trades off between resolution and framerate
   // when bandwidth is constrained. Default is MAINTAIN_RESOLUTION.
   optional DegradationPreference degradation_preference = 13;
+  // Per-spatial-layer bitrate budgets for SVC encodings, ordered from the
+  // lowest spatial layer to the highest. Only consulted when
+  // scalability_mode is set. Overrides the codec's resolution-derived
+  // per-layer bitrate limits. Requires a libwebrtc build with
+  // svc_layer_bitrates support; silently ignored on older builds.
+  repeated SvcLayerBitrates svc_layer_bitrates = 14;
 }
 
 enum VideoEncoderBackend {
